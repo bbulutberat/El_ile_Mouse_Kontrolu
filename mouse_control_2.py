@@ -34,8 +34,6 @@ class MouseControl():
                     p0 = np.array([[cx, cy]], dtype=np.float32).reshape(-1, 1, 2)
                     prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     self.optic_flow(p0, prev_gray, frame)
-                       
-
             if key == 27:
                 break
         self.cap.release()
@@ -72,10 +70,7 @@ class MouseControl():
                 p0 = p1.reshape(-1, 1, 2)
 
             if k == 27:
-                    break
-
-                
-             
+                    break      
 
     def mousemove(self, x, y, frame):
         screen_w, screen_h = pyautogui.size()
