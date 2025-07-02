@@ -46,123 +46,114 @@
 
 ``` 
 import cv2
-import mediapipe as mp
 import numpy as np
+import mediapipe as mp
 import pyautogui
 
 class MouseControl():
-
+    
     def __init__(self):
         self.cap = cv2.VideoCapture(0)
         # Mediapipe el tespit modeli yüklenir.
         mp_hands = mp.solutions.hands
         # El tespiti için gerekli parametreler verilir.
-                                    # Elin hareketi takip mi edilecek yoksa her seferinde yeniden mi tespit edilecek.
         self.hands = mp_hands.Hands(static_image_mode=False,
-                                     max_num_hands=1,   # Maksimum tespit edilecek el sayısı.
-                                     min_detection_confidence=0.5, # El algılamanın başarılı olması için min güven puanı.
-                                     min_tracking_confidence=0.5) # El takibinin başarılı olması için min güven puanı.
-
+                                     max_num_hands=1,
+                                     min_detection_confidence=0.5,
+                                     min_tracking_confidence=0.5)
+        # Lukas-kanade için parametreler ayarlanır.
+        self.lk_params = dict(winSize  = (15, 15), 
+                         maxLevel = 2, 
+                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        # El tespiti için flag
+        self.mp_control = False
+        # Optik Akış flagi
+        self.p0 = None
         
-    def run(self):
+
+    def main(self):
+        
         while True:
-            # Her frame döngü içinde tek tek alınır.
+            # Frame alınır
             ret, frame = self.cap.read()
             if not ret:
                 break
-            # Görüntü yatay eksende çevirilir.
+            # Dikey eksende döndürülür.
             frame = cv2.flip(frame, 1)
-            # Mediapipe rgb görüntü istediği için frame rgb formatına çevirilir.
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Algılama işlemi 
-            results = self.hands.process(rgb)
+
+            if self.mp_control == False:
+                # Mediapipe için rgb formata çevirilir.
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.hands.process(rgb)
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        h, w, _ = frame.shape
+                        # İşaret parmağı koordinatları tespit edilir
+                        lm = hand_landmarks.landmark[8]  
+                        cx, cy = int(lm.x * w), int(lm.y * h)
+                        self.p0 = np.array([[cx, cy]], dtype=np.float32).reshape(-1, 1, 2)
+                        # Görüntü optik akış için griye çevilir.
+                        self.frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        # Çizimler için maske oluşturulur
+                        self.mask = np.zeros_like(frame)
+                        # Tekrar el tespiti yapılmamaı için bayrak değeri True yapılır.
+                        self.mp_control = True
             
-            # Görüntü ekranda gösterilir.
-            cv2.imshow("MouseKontrol", frame)
-            key = cv2.waitKey(30)
+            # p0 bulundu iste optik flow fonksiyonuna git
+            if self.p0 is not None:
+                img = self.optic_flow()
+            
 
-            # Eğer el algılandıysa
-            if results.multi_hand_landmarks:
-                # Algılanan landmarklar tek tek for döngüsünde işlenir
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # Mediapipe koordinatları ölçek olarak verdiği için görüntü boyutu ile normalizasyon yapılır.
-                    h, w, _ = frame.shape
-                    # İşaret parmağının ucunu algılayan landmark seçilir.
-                    lm = hand_landmarks.landmark[8]
-                    # Algılanan noktanın koordinatları hesaplanır.  
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    # Lucas-kanade için koordinatlar uygun formata getirilir.
-                    p0 = np.array([[cx, cy]], dtype=np.float32).reshape(-1, 1, 2)
-                    # Lucas-kanade için görüntü griye çevirilir.
-                    prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            else:
+                img = frame
 
-                    self.optic_flow(p0, prev_gray, frame)
-                    break   
-
-            if key == 27: # ESC tuşuna basılırsa döngüden çık
+            cv2.imshow("MouseControl", img)
+            key = cv2.waitKey(1)
+            if key == 27:
                 break
-        self.cap.release()
-        cv2.destroyAllWindows()
-
-    def optic_flow(self, p0, prev_gray, frame):
-        #Lukas-kanade için parametreler ayarlanır.
-        lk_params = dict(winSize  = (15, 15), # Hareketi hesaplamak için her piksel çevresinde oluşturulacak pencere boyutu
-                         maxLevel = 2, # Akış hesaplaması için görüntünün oluşturulan Gaussian piramidindeki maksimum seviye sayısı.
-                     # Optik akış iterasyonu, ya maksimum 10 adımda tamamlanır ya da hareketin değişimi 0.03’ten küçük olduğunda durur.
-                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)) 
+            
+    def optic_flow(self):
+        # Optik akış için sıradaki frame alınır
+        ret, frame2 = self.cap.read()
+        frame2 = cv2.flip(frame2, 1)
+        frame2_gray = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
         
-        # Hareketin görselleştirilmesi için aynı boyutta maske oluşturulur.
-        mask = np.zeros_like(frame)  
+        # Optik akış hesaplaması yapılır.
+        p1, st, err = cv2.calcOpticalFlowPyrLK(self.frame_gray, frame2_gray, self.p0, None, **self.lk_params)
 
-        while True:
-            # Sıradaki frame alınır
-            ret, next_frame = self.cap.read()
-            if not ret:
-                break
-
-            next_frame = cv2.flip(next_frame, 1)
-            next_gray = cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY)
-
-            # Lucas-kanade ile optik akış hesaplanır. Noktanın diğer framedeki koordinatları p1 değişkeninde saklanır.
-            p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, next_gray, p0, None, **lk_params)
-
-            if p1 is not None :
-                # p0 ve p1 koordinatlarını numpy dizisinden tek boyutlu diziye çevrilir.
-                a, b = p0.ravel()
-                c, d = p1.ravel()
-                # Maskeye hareket gösterimi için çizim yapılır.
-                mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (0,255,0), 2)
-                # Hareket sonundaki nokta yuvarlak ile işaretlenir.
-                next_frame = cv2.circle(next_frame, (int(c), int(d)), 5, (0,255,0), -1)
-                self.mousemove(c, d, next_frame)
-
-                # Maskeye çizilen hareket gösterimini ekranda göster için frame ile birleştirilir.
-                img = cv2.add(next_frame, mask)
-
-                cv2.imshow('MouseKontrol', img)
-                k = cv2.waitKey(30)
-                # Tekrar optik akış hesaplaması için son frame eski frame atanır ve sıradaki frame'i almak için döngü başa döner.
-                prev_gray = next_gray.copy()
-                # Lucask-kanade için yeni p0 noktası uygun formata çevirilir.
-                p0 = p1.reshape(-1, 1, 2)
-
-            if k == 27:
-                    break
-
-    def mousemove(self, x, y, frame):
+        if p1 is not None:
+            # Koordinatlar uygun formata çevirilir.
+            a, b = self.p0.ravel()
+            c, d = p1.ravel()
+            # Maskeye hareket çizimleri yapılır
+            self.mask = cv2.line(self.mask, (int(a), int(b)), (int(c), int(d)), (0,255,0), 2)
+            # Hareket edilen nokta kapalı daire ile işaretlenir.
+            self.frame2 = cv2.circle(frame2, (int(c), int(d)), 5, (0,255,0), -1)
+            # maske ve frame birleştirilerek çizim işlemi tamamlanır.
+            img = cv2.add(frame2, self.mask)
+            # Mouse hareketleri için mousemove fonksiyonu çağırılır.
+            self.mousemove(c, d, frame2)
+            # Optik akış hesaplamasının devamı için önceki görüntü değiştirilir.
+            self.frame_gray = frame2_gray.copy()
+            # p0 noktası güncellenir.
+            self.p0 = p1.reshape(-1, 1, 2)
+            return img
+    
+    def mousemove(self, x, y, frame2):
         # Mouse kontolü için ekran boyutu alınır.
         screen_w, screen_h = pyautogui.size()
         # Pencere boyutu alınır. 
-        frame_h, frame_w = frame.shape[:2]
+        frame_h, frame_w = frame2.shape[:2]
         # Mouse hareket koordinatları pencere ve ekran boyutuna göre ayarlanır.
         move_x = int(x * (screen_w / frame_w))
         move_y = int(y * (screen_h / frame_h))
-        # Mouse belirlenen koordinatlara hareket ettirilir.
+         # Mouse belirlenen koordinatlara hareket ettirilir.
         pyautogui.moveTo(move_x, move_y)
+
 
 if __name__ == "__main__":
     mc = MouseControl()
-    mc.run()
+    mc.main()
 ``` 
 
 
