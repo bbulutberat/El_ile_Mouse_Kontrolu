@@ -17,7 +17,6 @@ class MouseControl():
                          criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
         self.mp_control = False
         self.p0 = None
-        self.mask_control = False
 
     def main(self):
         
