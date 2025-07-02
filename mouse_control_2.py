@@ -1,10 +1,10 @@
 import cv2
-import mediapipe as mp
 import numpy as np
+import mediapipe as mp
 import pyautogui
 
 class MouseControl():
-
+    
     def __init__(self):
         self.cap = cv2.VideoCapture(0)
         mp_hands = mp.solutions.hands
@@ -12,73 +12,71 @@ class MouseControl():
                                      max_num_hands=1,
                                      min_detection_confidence=0.5,
                                      min_tracking_confidence=0.5)
+        self.lk_params = dict(winSize  = (15, 15), 
+                         maxLevel = 2, 
+                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        self.mp_control = False
+        self.p0 = None
+        self.mask_control = False
+
+    def main(self):
         
-    def run(self):
         while True:
             ret, frame = self.cap.read()
             if not ret:
                 break
-
             frame = cv2.flip(frame, 1)
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb)
 
-            cv2.imshow("MouseKontrol", frame)
-            key = cv2.waitKey(30)
+            if self.mp_control == False:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.hands.process(rgb)
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        h, w, _ = frame.shape
+                        lm = hand_landmarks.landmark[8]  
+                        cx, cy = int(lm.x * w), int(lm.y * h)
+                        self.p0 = np.array([[cx, cy]], dtype=np.float32).reshape(-1, 1, 2)
+                        self.frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        self.mask = np.zeros_like(frame)
+                        self.mp_control = True
+            
+            if self.p0 is not None:
+                img = self.optic_flow()
+            
+            else:
+                img = frame
 
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    h, w, _ = frame.shape
-                    lm = hand_landmarks.landmark[8]  
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    p0 = np.array([[cx, cy]], dtype=np.float32).reshape(-1, 1, 2)
-                    prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    self.optic_flow(p0, prev_gray, frame)
+            cv2.imshow("MouseControl", img)
+            key = cv2.waitKey(1)
             if key == 27:
                 break
-        self.cap.release()
-        cv2.destroyAllWindows()
-
-    def optic_flow(self, p0, prev_gray, frame):
-        lk_params = dict(winSize  = (15, 15), 
-                         maxLevel = 2, 
-                         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+            
+    def optic_flow(self):
+        ret, frame2 = self.cap.read()
+        frame2 = cv2.flip(frame2, 1)
+        frame2_gray = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
         
-        mask = np.zeros_like(frame)  
+        p1, st, err = cv2.calcOpticalFlowPyrLK(self.frame_gray, frame2_gray, self.p0, None, **self.lk_params)
 
-        while True:
-            ret, next_frame = self.cap.read()
-            if not ret:
-                break
-
-            next_frame = cv2.flip(next_frame, 1)
-            next_gray = cv2.cvtColor(next_frame, cv2.COLOR_BGR2GRAY)
-
-            p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, next_gray, p0, None, **lk_params)
-
-            if p1 is not None :
-                a, b = p0.ravel()
-                c, d = p1.ravel()
-                mask = cv2.line(mask, (int(a), int(b)), (int(c), int(d)), (0,255,0), 2)
-                next_frame = cv2.circle(next_frame, (int(c), int(d)), 5, (0,255,0), -1)
-                self.mousemove(c, d, next_frame)
-                img = cv2.add(next_frame, mask)
-
-                cv2.imshow('MouseKontrol', img)
-                k = cv2.waitKey(30)
-                prev_gray = next_gray.copy()
-                p0 = p1.reshape(-1, 1, 2)
-
-            if k == 27:
-                    break      
-
-    def mousemove(self, x, y, frame):
+        if p1 is not None:
+            a, b = self.p0.ravel()
+            c, d = p1.ravel()
+            self.mask = cv2.line(self.mask, (int(a), int(b)), (int(c), int(d)), (0,255,0), 2)
+            self.frame2 = cv2.circle(frame2, (int(c), int(d)), 5, (0,255,0), -1)
+            img = cv2.add(frame2, self.mask)
+            self.mousemove(c, d, frame2)
+            self.frame_gray = frame2_gray.copy()
+            self.p0 = p1.reshape(-1, 1, 2)
+            return img
+    
+    def mousemove(self, x, y, frame2):
         screen_w, screen_h = pyautogui.size()
-        frame_h, frame_w = frame.shape[:2]
+        frame_h, frame_w = frame2.shape[:2]
         move_x = int(x * (screen_w / frame_w))
         move_y = int(y * (screen_h / frame_h))
         pyautogui.moveTo(move_x, move_y)
 
+
 if __name__ == "__main__":
     mc = MouseControl()
-    mc.run()
+    mc.main()
